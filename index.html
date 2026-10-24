@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>POR SYSTEM 5.0 - Cyberpunk AI Vision HUD</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- TensorFlow.js & COCO-SSD -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.2/dist/coco-ssd.min.js"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800;900&family=JetBrains+Mono:wght@300;400;600;700;800&display=swap');
+
+        :root {
+            --theme-color: #ff0033;
+            --theme-glow: rgba(255, 0, 51, 0.45);
+            --theme-secondary: #ff3366;
+            --laser-color: #ff0033;
+            --laser-speed: 2s;
+        }
+
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            font-family: 'JetBrains Mono', monospace;
+            background-color: #030306;
+            color: #f1f5f9;
+            overflow-x: hidden;
+            touch-action: manipulation;
+        }
+
+        .hud-font {
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        /* Glassmorphism Panel */
+        .glass-panel {
+            background: rgba(10, 10, 16, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .glass-panel-glow {
+            background: rgba(12, 12, 20, 0.85);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--theme-color);
+            box-shadow: 0 0 25px var(--theme-glow);
+        }
+
+        /* Cyber CRT / Scanline Filter */
+        .crt-scanline {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0, 0, 0, 0.3) 50%,
+                rgba(0, 0, 0, 0.3)
+            );
+            background-size: 100% 4px;
+        }
+
+        /* Animated Laser Sweep */
+        @keyframes laserScan {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+
+        .laser-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--laser-color), #ffffff, var(--laser-color), transparent);
+            box-shadow: 0 0 15px var(--laser-color), 0 0 30px var(--laser-color);
+            animation: laserScan var(--laser-speed) linear infinite;
+            pointer-events: none;
+            z-index: 25;
+        }
+
+        /* 3D Dynamic Perspective Grid Overlay */
+        .grid-3d-bg {
+            background-image: 
+                linear-gradient(to right, rgba(255,255,255,0.05) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255,255,255,0.05) 1px, transparent 1px);
+            background-size: 30px 30px;
+        }
+
+        /* Sci-Fi HUD Reticle Corner Brackets */
+        .hud-corner {
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            border-color: var(--theme-color);
+            pointer-events: none;
+            z-index: 26;
+            transition: all 0.3s ease;
+            filter: drop-shadow(0 0 8px var(--theme-color));
+        }
+
+        /* Glowing Text Effects */
+        .neon-text {
+            color: var(--theme-color);
+            text-shadow: 0 0 10px var(--theme-glow), 0 0 20px var(--theme-color);
+        }
+
+        /* Custom Scrollbar for Terminals */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(5, 5, 10, 0.8);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--theme-color);
+            border-radius: 2px;
+        }
+
+        /* Sci-Fi Pulse Animation */
+        @keyframes radarPulse {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 12px var(--theme-color)); }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+        .pulse-hud {
+            animation: radarPulse 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-2 sm:p-4 bg-black relative overflow-x-hidden">
+
+    <!-- CANVAS BACKGROUND PARTICLE NOISE EFFECT -->
+    <canvas id="bg-particles" class="fixed inset-0 w-full h-full pointer-events-none z-0 opacity-40"></canvas>
+
+    <!-- INTRO / PROFILE SELECTION HERO MODAL -->
+    <div id="intro-modal" class="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4 backdrop-blur-xl transition-all duration-500">
+        <div class="max-w-2xl w-full border border-zinc-800 bg-zinc-950/90 p-6 sm:p-8 rounded-3xl shadow-2xl relative overflow-hidden glass-panel">
+            <!-- Background Glow Orbs -->
+            <div class="absolute -top-16 -right-16 w-56 h-56 bg-red-600/20 rounded-full blur-3xl pointer-events-none"></div>
+            <div class="absolute -bottom-16 -left-16 w-56 h-56 bg-cyan-600/20 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900/90 border border-zinc-800 text-[10px] text-zinc-400 hud-font tracking-widest uppercase mb-3">
+                    <span class="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> POR SYSTEM 5.0 • CYBER VISION AI
+                </div>
+                <h1 class="hud-font text-3xl sm:text-5xl font-black tracking-wider text-white uppercase drop-shadow-md">CHỌN CẤU HÌNH NHÂN VẬT</h1>
+                <p class="text-xs text-zinc-400 mt-2 uppercase tracking-widest font-mono">Select operator protocol & high-speed telemetry mode</p>
+            </div>
+
+            <!-- Profile Cards Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                <!-- OPTION 1: NGHĨA OVERDRIVE RED -->
+                <button onclick="selectOperator('nghia')" class="group relative text-left p-5 rounded-2xl border border-red-600/60 bg-red-950/20 hover:bg-red-900/30 transition-all duration-300 shadow-[0_0_25px_rgba(255,0,51,0.15)] hover:shadow-[0_0_35px_rgba(255,0,51,0.35)] overflow-hidden">
+                    <div class="absolute top-0 right-0 px-3 py-0.5 bg-red-600 text-black text-[9px] font-black hud-font tracking-wider rounded-bl-lg">MAX POWER</div>
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-xl bg-red-600/20 border border-red-500 flex items-center justify-center text-red-500 text-xl group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-fire-flame-curved"></i>
+                        </div>
+                        <div>
+                            <h2 class="hud-font text-lg font-bold text-red-500">1. NGHĨA</h2>
+                            <p class="text-[10px] text-red-400 font-bold tracking-wider uppercase">OVERDRIVE RED MODE</p>
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-zinc-400 leading-relaxed font-mono mt-3">
+                        Giao diện <strong class="text-red-400">Crimson Neon (#FF0033)</strong> rực rỡ. Laser quét cường độ cao, âm thanh radar tần số cao, bộ lọc particle sinh động & telemetry công suất tối đa.
+                    </p>
+                    <div class="mt-4 pt-3 border-t border-red-900/40 flex items-center justify-between text-[10px] font-mono text-red-400">
+                        <span>CORE OUTPUT: 999%</span>
+                        <i class="fa-solid fa-chevron-right group-hover:translate-x-1 transition-transform"></i>
+                    </div>
+                </button>
+
+                <!-- OPTION 2: VĨNH TUẤT WHITE TACTICAL -->
+                <button onclick="selectOperator('vinh')" class="group relative text-left p-5 rounded-2xl border border-zinc-700 bg-zinc-900/40 hover:bg-zinc-800/60 transition-all duration-300 overflow-hidden hover:border-zinc-500">
+                    <div class="absolute top-0 right-0 px-3 py-0.5 bg-zinc-700 text-zinc-200 text-[9px] font-bold hud-font tracking-wider rounded-bl-lg">TACTICAL</div>
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-xl bg-zinc-800 border border-zinc-600 flex items-center justify-center text-zinc-200 text-xl group-hover:scale-110 transition-transform">
+                            <i class="fa-solid fa-shield-halved"></i>
+                        </div>
+                        <div>
+                            <h2 class="hud-font text-lg font-bold text-white">2. VĨNH TUẤT</h2>
+                            <p class="text-[10px] text-zinc-400 font-bold tracking-wider uppercase">WHITE TACTICAL MODE</p>
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-zinc-400 leading-relaxed font-mono mt-3">
+                        Giao diện <strong class="text-zinc-200">Arctic White (#FFFFFF)</strong> tinh tế. Quét tĩnh chuẩn mực, radar âm thanh êm ái & tối ưu hóa hiển thị telemetry gọn gàng.
+                    </p>
+                    <div class="mt-4 pt-3 border-t border-zinc-800 flex items-center justify-between text-[10px] font-mono text-zinc-400">
+                        <span>PRECISION: STABLE</span>
+                        <i class="fa-solid fa-chevron-right group-hover:translate-x-1 transition-transform"></i>
+                    </div>
+                </button>
+            </div>
+
+            <!-- Technical Disclaimer Notice -->
+            <div class="p-3 bg-zinc-900/90 border border-zinc-800 rounded-xl text-[10px] text-zinc-400 space-y-1">
+                <div class="flex items-center gap-1.5 text-yellow-500 font-bold">
+                    <i class="fa-solid fa-triangle-exclamation"></i> LƯU Ý HỆ THỐNG:
+                </div>
+                <p>• Trình duyệt web KHÔNG THỂ tự xác định danh tính cá nhân hay tọa độ GPS của người lạ.</p>
+                <p>• Khoảng cách (mét) được ước tính bằng thuật toán tỷ lệ chiều cao khung hình pixels mang tính tham khảo.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP DASHBOARD INTERFACE -->
+    <div id="main-dashboard" class="w-full max-w-6xl mx-auto flex flex-col gap-3 my-auto opacity-0 transition-opacity duration-700 z-10">
+        
+        <!-- HEADER / NAVIGATION TELEMETRY BAR -->
+        <header class="w-full glass-panel px-4 py-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 border border-zinc-800 shadow-xl">
+            <!-- Left Operator Badge & Realtime Metrics -->
+            <div class="flex items-center gap-3">
+                <div id="operator-badge" class="px-3.5 py-1.5 rounded-xl text-xs font-black hud-font tracking-widest uppercase border flex items-center gap-2 shadow-sm">
+                    <span id="badge-ping" class="w-2.5 h-2.5 rounded-full animate-ping"></span>
+                    <span id="badge-name">POR SYSTEM 5.0</span>
+                </div>
+
+                <div class="h-5 w-px bg-zinc-800 hidden sm:block"></div>
+
+                <div class="flex items-center gap-3 text-xs text-zinc-400 font-mono">
+                    <div>FPS: <strong id="val-fps" class="text-white font-bold">0</strong></div>
+                    <div>Số người: <strong id="val-count" class="text-white font-bold">0</strong></div>
+                    <div class="hidden md:block">Thời gian chạy: <strong id="val-uptime" class="text-white font-bold">00:00</strong></div>
+                </div>
+            </div>
+
+            <!-- Right Controls: Detection Mode, Neon Color Theme, Audio, Grid -->
+            <div class="flex items-center gap-2">
+                <!-- Speed vs Precision Toggle -->
+                <select id="select-mode" onchange="onModeChange()" class="bg-zinc-900 border border-zinc-700 text-xs text-zinc-200 px-2.5 py-1.5 rounded-xl outline-none focus:border-red-500 transition-colors">
+                    <option value="detail">🔍 Độ Chi Tiết Cao (Precision)</option>
+                    <option value="speed">⚡ Ưu Tiên Tốc Độ (Fast FPS)</option>
+                </select>
+
+                <!-- Color Palette Switcher -->
+                <select id="select-color" onchange="switchColorPalette(this.value)" class="bg-zinc-900 border border-zinc-700 text-xs text-zinc-200 px-2.5 py-1.5 rounded-xl outline-none focus:border-red-500 transition-colors">
+                    <option value="red">🔴 Crimson Red</option>
+                    <option value="white">⚪ Arctic White</option>
+                    <option value="cyan">🔵 Electric Cyan</option>
+                    <option value="green">🟢 Matrix Green</option>
+                    <option value="gold">🟡 Cyber Gold</option>
+                </select>
+
+                <!-- Toggle 3D Grid Overlay -->
+                <button onclick="toggleGridOverlay()" id="btn-grid" class="p-2 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-xl text-xs text-zinc-300 transition-all" title="Bật/Tắt Lưới 3D HUD">
+                    <i class="fa-solid fa-border-all"></i>
+                </button>
+
+                <!-- Toggle Audio Alerts -->
+                <button onclick="toggleAudioAlerts()" id="btn-audio" class="p-2 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-xl text-xs text-green-400 transition-all" title="Bật/Tắt Cảnh Báo Radar">
+                    <i class="fa-solid fa-volume-high" id="icon-audio"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- VIEWPORT CAMERA CONTAINER -->
+        <div id="viewport-box" class="relative w-full aspect-[4/3] sm:aspect-[16/9] bg-black rounded-3xl overflow-hidden border border-zinc-800 glass-panel-glow shadow-2xl flex items-center justify-center">
+            
+            <!-- Laser Scan Sweep Line -->
+            <div id="laser-sweep-element" class="laser-line"></div>
+            
+            <!-- 3D Perspective Grid -->
+            <div id="grid-3d-element" class="absolute inset-0 grid-3d-bg pointer-events-none opacity-40 z-10"></div>
+            
+            <!-- CRT Scanline Screen FX -->
+            <div id="crt-overlay" class="absolute inset-0 crt-scanline pointer-events-none z-10 opacity-30"></div>
+
+            <!-- Video & Canvas Render Overlay -->
+            <video id="webcam" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover transform -scale-x-100"></video>
+            <canvas id="hud-canvas" class="absolute inset-0 w-full h-full object-cover transform -scale-x-100 z-20"></canvas>
+
+            <!-- Loading Mask during AI Initial Loading -->
+            <div id="ai-loading-screen" class="absolute inset-0 bg-black/90 flex flex-col items-center justify-center z-40 p-6 text-center">
+                <div class="relative mb-4">
+                    <div class="w-20 h-20 border-4 border-t-transparent rounded-full animate-spin" id="ai-spinner"></div>
+                    <i class="fa-solid fa-brain absolute inset-0 m-auto text-2xl text-zinc-400 flex items-center justify-center"></i>
+                </div>
+                <h3 class="hud-font text-lg sm:text-xl font-extrabold text-white tracking-widest uppercase">ĐANG TẢI AI ENGINE (COCO-SSD)...</h3>
+                <p class="text-xs text-zinc-400 mt-2 font-mono">Khởi tạo mô hình nhận diện sinh trắc học thời gian thực</p>
+            </div>
+
+            <!-- Viewport Reticle Brackets -->
+            <div class="hud-corner top-4 left-4 border-t-2 border-l-2"></div>
+            <div class="hud-corner top-4 right-4 border-t-2 border-r-2"></div>
+            <div class="hud-corner bottom-4 left-4 border-b-2 border-l-2"></div>
+            <div class="hud-corner bottom-4 right-4 border-b-2 border-r-2"></div>
+
+            <!-- Overdrive Telemetry Overlay Widget (For Nghĩa profile) -->
+            <div id="overdrive-telemetry" class="absolute top-4 left-16 z-30 hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-xl bg-black/70 border border-red-600/50 backdrop-blur text-[10px] font-mono text-red-400">
+                <span><i class="fa-solid fa-gauge-high mr-1"></i> OVERDRIVE: <strong class="text-white">999%</strong></span>
+                <span>CYBER-SHIELD: <strong class="text-green-400">ACTIVE</strong></span>
+            </div>
+
+            <!-- Watermark Tag -->
+            <div class="absolute bottom-4 left-4 z-30 text-[10px] font-mono text-zinc-400 bg-black/70 px-2.5 py-1 rounded-lg backdrop-blur border border-zinc-800">
+                POR SYSTEM 5.0 • AI RECOGNITION HUD
+            </div>
+        </div>
+
+        <!-- STATS TELEMETRY DASHBOARD PANEL -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div class="glass-panel p-3 rounded-2xl border border-zinc-800 text-center">
+                <div class="text-[10px] text-zinc-500 uppercase font-bold hud-font">Tổng lượt nhận diện</div>
+                <div id="stat-total-detects" class="text-lg font-extrabold font-mono text-white mt-0.5">0</div>
+            </div>
+            <div class="glass-panel p-3 rounded-2xl border border-zinc-800 text-center">
+                <div class="text-[10px] text-zinc-500 uppercase font-bold hud-font">Số người tối đa cùng lúc</div>
+                <div id="stat-max-persons" class="text-lg font-extrabold font-mono text-white mt-0.5">0</div>
+            </div>
+            <div class="glass-panel p-3 rounded-2xl border border-zinc-800 text-center">
+                <div class="text-[10px] text-zinc-500 uppercase font-bold hud-font">Khoảng cách gần nhất</div>
+                <div id="stat-min-distance" class="text-lg font-extrabold font-mono text-white mt-0.5">0.0m</div>
+            </div>
+            <div class="glass-panel p-3 rounded-2xl border border-zinc-800 text-center">
+                <div class="text-[10px] text-zinc-500 uppercase font-bold hud-font">FPS Đỉnh</div>
+                <div id="stat-peak-fps" class="text-lg font-extrabold font-mono text-white mt-0.5">0</div>
+            </div>
+        </div>
+
+        <!-- CONTROLS TOOLBAR -->
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <button onclick="takeSnapshot()" class="px-3 py-3 bg-zinc-950 border border-zinc-800 hover:border-zinc-600 rounded-2xl text-xs font-bold hud-font flex items-center justify-center gap-2 text-zinc-200 hover:text-white transition-all active:scale-95 shadow-md">
+                <i class="fa-solid fa-camera text-red-500 text-sm"></i> Chụp Ảnh HUD
+            </button>
+            <button onclick="switchCamera()" class="px-3 py-3 bg-zinc-950 border border-zinc-800 hover:border-zinc-600 rounded-2xl text-xs font-bold hud-font flex items-center justify-center gap-2 text-zinc-200 hover:text-white transition-all active:scale-95 shadow-md">
+                <i class="fa-solid fa-camera-rotate text-cyan-400 text-sm"></i> Đổi Camera
+            </button>
+            <button onclick="toggleFlashlight()" id="btn-flash" disabled class="px-3 py-3 bg-zinc-950 border border-zinc-800 rounded-2xl text-xs font-bold hud-font flex items-center justify-center gap-2 text-zinc-500 opacity-50 cursor-not-allowed transition-all shadow-md">
+                <i class="fa-solid fa-bolt" id="icon-flash"></i> Đèn Flash
+            </button>
+            <button onclick="exportSystemLogs()" class="px-3 py-3 bg-zinc-950 border border-zinc-800 hover:border-zinc-600 rounded-2xl text-xs font-bold hud-font flex items-center justify-center gap-2 text-zinc-200 hover:text-white transition-all active:scale-95 shadow-md">
+                <i class="fa-solid fa-file-arrow-down text-yellow-500 text-sm"></i> Xuất Báo Cáo
+            </button>
+            <button onclick="toggleFullscreen()" class="col-span-2 sm:col-span-1 px-3 py-3 bg-zinc-950 border border-zinc-800 hover:border-zinc-600 rounded-2xl text-xs font-bold hud-font flex items-center justify-center gap-2 text-zinc-200 hover:text-white transition-all active:scale-95 shadow-md">
+                <i class="fa-solid fa-expand text-green-400 text-sm"></i> Toàn Màn Hình
+            </button>
+        </div>
+
+        <!-- REALTIME ACTIVITY LOG TERMINAL -->
+        <div class="w-full glass-panel border border-zinc-900 rounded-2xl p-3 text-xs font-mono">
+            <div class="flex items-center justify-between pb-2 mb-2 border-b border-zinc-900 text-zinc-500 font-bold">
+                <span class="flex items-center gap-2"><i class="fa-solid fa-terminal text-red-500"></i> POR TELEMETRY ACTIVITY LOG</span>
+                <span id="terminal-clock" class="text-[10px]">--:--:--</span>
+            </div>
+            <div id="terminal-content" class="space-y-1 max-h-28 overflow-y-auto pr-1 text-[11px] text-zinc-400">
+                <div>[SYSTEM] Khởi chạy hệ thống POR SYSTEM 5.0...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Hidden Canvas for Full Resolution Snapshot Export -->
+    <canvas id="export-canvas" class="hidden"></canvas>
+
+    <!-- CORE SYSTEM JS LOGIC -->
+    <script>
+        // System Config State
+        let activeProfile = 'nghia'; // 'nghia' or 'vinh'
+        let currentThemeKey = 'red';
+        let cocoSsdModel = null;
+        let video = document.getElementById('webcam');
+        let canvas = document.getElementById('hud-canvas');
+        let ctx = canvas.getContext('2d');
+
+        let isDetecting = false;
+        let audioAlerts = true;
+        let gridVisible = true;
+        let currentFacingMode = 'user';
+        let audioCtx = null;
+
+        // Telemetry Stats Trackers
+        let totalDetectionsCount = 0;
+        let maxPersonsSimultaneous = 0;
+        let minDistanceObserved = 999.0;
+        let peakFpsObserved = 0;
+        let startTimeStamp = Date.now();
+
+        let systemLogs = [];
+        let trackedTargets = []; // Stores interpolated target positions for LERP
+
+        // Color Themes Dictionary
+        const colorThemes = {
+            red: { color: '#ff0033', glow: 'rgba(255, 0, 51, 0.45)', laser: '#ff0033' },
+            white: { color: '#ffffff', glow: 'rgba(255, 255, 255, 0.35)', laser: '#00f0ff' },
+            cyan: { color: '#00f0ff', glow: 'rgba(0, 240, 255, 0.45)', laser: '#00f0ff' },
+            green: { color: '#00ff66', glow: 'rgba(0, 255, 102, 0.45)', laser: '#00ff66' },
+            gold: { color: '#ffcc00', glow: 'rgba(255, 204, 0, 0.45)', laser: '#ffcc00' }
+        };
+
+        // Append Activity Log Message
+        function appendLog(msg) {
+            const timeStr = new Date().toLocaleTimeString();
+            const entry = `[${timeStr}] ${msg}`;
+            systemLogs.push(entry);
+
+            const container = document.getElementById('terminal-content');
+            const div = document.createElement('div');
+            div.innerText = entry;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+
+            document.getElementById('terminal-clock').innerText = timeStr;
+        }
+
+        // Profile Operator Selection
+        async function selectOperator(profile) {
+            activeProfile = profile;
+            document.getElementById('intro-modal').classList.add('opacity-0', 'pointer-events-none');
+            setTimeout(() => document.getElementById('intro-modal').style.display = 'none', 500);
+
+            const dashboard = document.getElementById('main-dashboard');
+            dashboard.classList.remove('opacity-0');
+
+            const badgeName = document.getElementById('badge-name');
+            const badge = document.getElementById('operator-badge');
+            const telemetryWidget = document.getElementById('overdrive-telemetry');
+
+            if (profile === 'nghia') {
+                // NGHĨA OVERDRIVE RED
+                switchColorPalette('red');
+                badgeName.innerText = '1. NGHĨA [OVERDRIVE RED]';
+                badge.className = "px-3.5 py-1.5 rounded-xl text-xs font-black hud-font tracking-widest uppercase border flex items-center gap-2 bg-red-950/80 text-red-400 border-red-600/60 shadow-[0_0_20px_rgba(255,0,51,0.4)]";
+                document.getElementById('select-color').value = 'red';
+                telemetryWidget.classList.remove('hidden');
+                appendLog("ĐÃ KÍCH HOẠT NHÂN VẬT: NGHĨA (CHẾ ĐỘ TỐI ĐA CÔNG SUẤT OVERDRIVE RED)");
+            } else {
+                // VĨNH TUẤT WHITE TACTICAL
+                switchColorPalette('white');
+                badgeName.innerText = '2. VĨNH TUẤT [WHITE TACTICAL]';
+                badge.className = "px-3.5 py-1.5 rounded-xl text-xs font-black hud-font tracking-widest uppercase border flex items-center gap-2 bg-zinc-900 text-zinc-100 border-zinc-700 shadow-sm";
+                document.getElementById('select-color').value = 'white';
+                telemetryWidget.classList.add('hidden');
+                appendLog("ĐÃ KÍCH HOẠT NHÂN VẬT: VĨNH TUẤT (CHẾ ĐỘ CHUẨN MỰC WHITE TACTICAL)");
+            }
+
+            // Start Uptime Timer & Hardware
+            setInterval(updateUptimeClock, 1000);
+            await initializeCameraStream();
+            await loadAIModel();
+        }
+
+        // Palette Switcher Function
+        function switchColorPalette(key) {
+            currentThemeKey = key;
+            const theme = colorThemes[key] || colorThemes.red;
+
+            document.documentElement.style.setProperty('--theme-color', theme.color);
+            document.documentElement.style.setProperty('--theme-glow', theme.glow);
+            document.documentElement.style.setProperty('--laser-color', theme.laser);
+
+            const spinner = document.getElementById('ai-spinner');
+            if (spinner) spinner.style.borderColor = theme.color;
+
+            appendLog(`Đã chuyển đổi gam màu HUD: ${key.toUpperCase()}`);
+        }
+
+        // Camera Stream Setup
+        async function initializeCameraStream() {
+            try {
+                appendLog(`Khởi tạo camera stream (${currentFacingMode === 'user' ? 'Trước' : 'Sau'})...`);
+
+                const constraints = {
+                    video: {
+                        facingMode: currentFacingMode,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+
+                // Check Torch capabilities
+                const track = stream.getVideoTracks()[0];
+                const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+                const flashBtn = document.getElementById('btn-flash');
+
+                if (capabilities.torch) {
+                    flashBtn.disabled = false;
+                    flashBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                    flashBtn.classList.add('hover:border-zinc-600', 'text-zinc-200');
+                    appendLog("Phát hiện thiết bị hỗ trợ đèn Flash.");
+                } else {
+                    flashBtn.disabled = true;
+                    flashBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                }
+
+                return new Promise((resolve) => {
+                    video.onloadedmetadata = () => {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        appendLog(`Độ phân giải camera: ${video.videoWidth}x${video.videoHeight}px`);
+                        resolve();
+                    };
+                });
+            } catch (err) {
+                alert("Lỗi truy cập Camera: " + err.message);
+                appendLog("LỖI CAMERA: " + err.message);
+            }
+        }
+
+        // Load TensorFlow.js COCO-SSD Model
+        async function loadAIModel() {
+            try {
+                appendLog("Đang tải AI Model COCO-SSD...");
+                cocoSsdModel = await cocoSsd.load({ base: 'lite_mobilenet_v2' });
+                document.getElementById('ai-loading-screen').style.display = 'none';
+                appendLog("AI Model đã tải thành công! Bắt đầu nhận diện thời gian thực.");
+                isDetecting = true;
+                requestAnimationFrame(detectionLoop);
+            } catch (err) {
+                appendLog("LỖI TẢI AI MODEL: " + err.message);
+                alert("Không thể tải AI Model. Vui lòng kiểm tra kết nối mạng!");
+            }
+        }
+
+        // AI Detection & Smooth Tracking Loop Variables
+        let lastFrameTime = performance.now();
+        let frameCounter = 0;
+
+        async function detectionLoop() {
+            if (!isDetecting) return;
+
+            // Compute FPS
+            const now = performance.now();
+            frameCounter++;
+            if (now - lastFrameTime >= 1000) {
+                const fps = frameCounter;
+                frameCounter = 0;
+                lastFrameTime = now;
+                document.getElementById('val-fps').innerText = fps;
+                if (fps > peakFpsObserved) {
+                    peakFpsObserved = fps;
+                    document.getElementById('stat-peak-fps').innerText = peakFpsObserved;
+                }
+            }
+
+            // Perform Object Detection
+            let predictions = [];
+            if (cocoSsdModel && video.readyState === 4) {
+                const mode = document.getElementById('select-mode').value;
+                const minThreshold = mode === 'speed' ? 0.45 : 0.55;
+                predictions = await cocoSsdModel.detect(video, 6, minThreshold);
+            }
+
+            // Filter for Person Class
+            const persons = predictions.filter(p => p.class === 'person');
+            document.getElementById('val-count').innerText = persons.length;
+
+            // Stats Updating
+            if (persons.length > maxPersonsSimultaneous) {
+                maxPersonsSimultaneous = persons.length;
+                document.getElementById('stat-max-persons').innerText = maxPersonsSimultaneous;
+            }
+            totalDetectionsCount += persons.length;
+            document.getElementById('stat-total-detects').innerText = totalDetectionsCount;
+
+            // Trigger Radar Sound if Persons Detected
+            if (persons.length > 0 && audioAlerts) {
+                playRadarBeepSynth();
+            }
+
+            // Render HUD with Smooth Interpolation (LERP)
+            renderSmoothHUD(persons);
+
+            // Schedule Next Loop Frame
+            const delay = document.getElementById('select-mode').value === 'speed' ? 25 : 5;
+            setTimeout(() => requestAnimationFrame(detectionLoop), delay);
+        }
+
+        // Smooth Interpolation (LERP) Target Bounding Box Renderer
+        function renderSmoothHUD(persons) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Match tracked targets array length
+            if (trackedTargets.length !== persons.length) {
+                trackedTargets = persons.map(p => ({
+                    x: p.bbox[0],
+                    y: p.bbox[1],
+                    w: p.bbox[2],
+                    h: p.bbox[3],
+                    score: p.score
+                }));
+            } else {
+                // Smooth LERP movement across frames
+                const lerpFactor = 0.38; // Smoothness factor
+                persons.forEach((p, i) => {
+                    trackedTargets[i].x += (p.bbox[0] - trackedTargets[i].x) * lerpFactor;
+                    trackedTargets[i].y += (p.bbox[1] - trackedTargets[i].y) * lerpFactor;
+                    trackedTargets[i].w += (p.bbox[2] - trackedTargets[i].w) * lerpFactor;
+                    trackedTargets[i].h += (p.bbox[3] - trackedTargets[i].h) * lerpFactor;
+                    trackedTargets[i].score = p.score;
+                });
+            }
+
+            const currentTheme = colorThemes[currentThemeKey] || colorThemes.red;
+
+            // Draw HUD Box Overlay for Each Target
+            trackedTargets.forEach((target, index) => {
+                const { x, y, w, h, score } = target;
+                const confidence = Math.round(score * 100);
+
+                // Estimated Distance in Meters (Approximation formula based on canvas height)
+                const distanceMeters = (1.7 * (canvas.height * 0.75) / Math.max(h, 1)).toFixed(1);
+                
+                if (parseFloat(distanceMeters) < minDistanceObserved) {
+                    minDistanceObserved = parseFloat(distanceMeters);
+                    document.getElementById('stat-min-distance').innerText = `${minDistanceObserved}m`;
+                }
+
+                ctx.strokeStyle = currentTheme.color;
+                ctx.lineWidth = 2;
+                ctx.shadowColor = currentTheme.color;
+                ctx.shadowBlur = activeProfile === 'nghia' ? 14 : 7;
+
+                // Main Smooth Bounding Rect
+                ctx.strokeRect(x, y, w, h);
+
+                // Cyberpunk Corner Brackets
+                const bracketSize = Math.min(w, h) * 0.16;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                // Top-Left
+                ctx.moveTo(x, y + bracketSize); ctx.lineTo(x, y); ctx.lineTo(x + bracketSize, y);
+                // Top-Right
+                ctx.moveTo(x + w - bracketSize, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + bracketSize);
+                // Bottom-Left
+                ctx.moveTo(x, y + h - bracketSize); ctx.lineTo(x, y + h); ctx.lineTo(x + bracketSize, y + h);
+                // Bottom-Right
+                ctx.moveTo(x + w - bracketSize, y + h); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w, y + h - bracketSize);
+                ctx.stroke();
+
+                // Crosshair Reticle Center
+                const cx = x + w / 2;
+                const cy = y + h / 2;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+                ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 8, cy);
+                ctx.moveTo(cx, cy - 8); ctx.lineTo(cx, cy + 8);
+                ctx.stroke();
+
+                // HUD Information Badge
+                const labelText = `TARGET #0${index + 1} | ${confidence}% | ~${distanceMeters}m`;
+                ctx.font = 'bold 12px JetBrains Mono';
+                const textWidth = ctx.measureText(labelText).width;
+
+                ctx.fillStyle = currentTheme.color;
+                ctx.fillRect(x, y > 24 ? y - 24 : y, textWidth + 12, 22);
+
+                ctx.fillStyle = '#000000';
+                ctx.fillText(labelText, x + 6, y > 24 ? y - 8 : y + 15);
+            });
+
+            ctx.shadowBlur = 0; // Reset Shadow Glow
+        }
+
+        // Web Audio API Radar Synth Alert
+        function playRadarBeepSynth() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            try {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.value = activeProfile === 'nghia' ? 980 : 680;
+
+                gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.08);
+
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.08);
+            } catch (e) {}
+        }
+
+        // Hardware Controls
+        function toggleAudioAlerts() {
+            audioAlerts = !audioAlerts;
+            const btn = document.getElementById('btn-audio');
+            const icon = document.getElementById('icon-audio');
+
+            if (audioAlerts) {
+                btn.className = "p-2 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-xl text-xs text-green-400 transition-all";
+                icon.className = "fa-solid fa-volume-high";
+                appendLog("Âm thanh radar: BẬT");
+            } else {
+                btn.className = "p-2 bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-xl text-xs text-zinc-500 transition-all";
+                icon.className = "fa-solid fa-volume-xmark";
+                appendLog("Âm thanh radar: TẮT");
+            }
+        }
+
+        function toggleGridOverlay() {
+            gridVisible = !gridVisible;
+            document.getElementById('grid-3d-element').style.display = gridVisible ? 'block' : 'none';
+            appendLog(`Lưới 3D HUD: ${gridVisible ? 'BẬT' : 'TẮT'}`);
+        }
+
+        function onModeChange() {
+            const mode = document.getElementById('select-mode').value;
+            appendLog(`Chế độ nhận diện: ${mode === 'speed' ? '⚡ Tốc độ cao' : '🔍 Độ chi tiết cao'}`);
+        }
+
+        async function switchCamera() {
+            currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            appendLog(`Chuyển camera sang: ${currentFacingMode}`);
+            await initializeCameraStream();
+        }
+
+        let flashOn = false;
+        async function toggleFlashlight() {
+            const stream = video.srcObject;
+            if (!stream) return;
+            const track = stream.getVideoTracks()[0];
+            flashOn = !flashOn;
+
+            try {
+                await track.applyConstraints({ advanced: [{ torch: flashOn }] });
+                const icon = document.getElementById('icon-flash');
+                icon.className = flashOn ? "fa-solid fa-bolt text-yellow-400" : "fa-solid fa-bolt";
+                appendLog(`Đèn Flash: ${flashOn ? 'BẬT' : 'TẮT'}`);
+            } catch (e) {
+                alert("Thiết bị không hỗ trợ bật Flash trên trình duyệt này.");
+            }
+        }
+
+        function takeSnapshot() {
+            const expCanvas = document.getElementById('export-canvas');
+            expCanvas.width = video.videoWidth;
+            expCanvas.height = video.videoHeight;
+            const eCtx = expCanvas.getContext('2d');
+
+            // Draw webcam frame (correct scale)
+            eCtx.save();
+            eCtx.scale(-1, 1);
+            eCtx.drawImage(video, -expCanvas.width, 0, expCanvas.width, expCanvas.height);
+            eCtx.restore();
+
+            // Overlay HUD canvas graphics
+            eCtx.drawImage(canvas, 0, 0);
+
+            // Export PNG
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const a = document.createElement('a');
+            a.download = `POR-SYSTEM-Snapshot-${timestamp}.png`;
+            a.href = expCanvas.toDataURL('image/png');
+            a.click();
+
+            appendLog(`Đã chụp & xuất ảnh snapshot HUD: POR-SYSTEM-Snapshot-${timestamp}.png`);
+        }
+
+        function toggleFullscreen() {
+            const box = document.getElementById('viewport-box');
+            if (!document.fullscreenElement) {
+                box.requestFullscreen().catch(err => {
+                    alert("Không thể bật toàn màn hình: " + err.message);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function exportSystemLogs() {
+            const reportHeader = `======================================\nPOR SYSTEM 5.0 - CYBER VISION REPORT\nProfile Operator: ${activeProfile.toUpperCase()}\nExport Time: ${new Date().toLocaleString()}\nPeak FPS: ${peakFpsObserved}\nTotal Detections: ${totalDetectionsCount}\n======================================\n\n`;
+            const logText = reportHeader + systemLogs.join('\n');
+
+            const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `POR_System_Report_${Date.now()}.txt`;
+            a.click();
+
+            appendLog("Đã xuất tệp báo cáo nhật ký hoạt động hệ thống (.txt).");
+        }
+
+        function updateUptimeClock() {
+            const elapsed = Math.floor((Date.now() - startTimeStamp) / 1000);
+            const m = Math.floor(elapsed / 60).toString().padStart(2, '0');
+            const s = (elapsed % 60).toString().padStart(2, '0');
+            document.getElementById('val-uptime').innerText = `${m}:${s}`;
+        }
+
+        // Particle Canvas Noise Background Engine
+        (function initParticles() {
+            const pCanvas = document.getElementById('bg-particles');
+            const pCtx = pCanvas.getContext('2d');
+            let particles = [];
+
+            function resize() {
+                pCanvas.width = window.innerWidth;
+                pCanvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            resize();
+
+            for (let i = 0; i < 40; i++) {
+                particles.push({
+                    x: Math.random() * pCanvas.width,
+                    y: Math.random() * pCanvas.height,
+                    radius: Math.random() * 1.5 + 0.5,
+                    vx: (Math.random() - 0.5) * 0.4,
+                    vy: (Math.random() - 0.5) * 0.4
+                });
+            }
+
+            function animateParticles() {
+                pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+                pCtx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+
+                particles.forEach(p => {
+                    p.x += p.vx;
+                    p.y += p.vy;
+
+                    if (p.x < 0) p.x = pCanvas.width;
+                    if (p.x > pCanvas.width) p.x = 0;
+                    if (p.y < 0) p.y = pCanvas.height;
+                    if (p.y > pCanvas.height) p.y = 0;
+
+                    pCtx.beginPath();
+                    pCtx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                    pCtx.fill();
+                });
+
+                requestAnimationFrame(animateParticles);
+            }
+            animateParticles();
+        })();
+    </script>
+</body>
+</html>
